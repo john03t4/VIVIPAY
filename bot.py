@@ -13,7 +13,7 @@ from telegram.ext import (
 )
 
 # --- CONFIGURATION ---
-TOKEN = os.getenv("BOT_TOKEN", "8784656617:AAEli7-M09i9yncX4QWXWG8nUpbUvD7KeWA")
+TOKEN = os.getenv("BOT_TOKEN", "8784656617:AAFh3VgWv6wmkQ9d-z6vdhDLlNQYCDecE1I")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "8473662465"))
 NEWBIE_BONUS = 200
 REFERRAL_REWARD = 200
@@ -252,7 +252,7 @@ async def buy_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_bal = db_query("SELECT balance FROM users WHERE user_id = ?", (user_id,), fetch=True)[0][0]
     if user_bal >= plan[1]:
         db_query("UPDATE users SET balance = balance - ? WHERE user_id = ?", (plan[1], user_id))
-        db_query("INSERT INTO investments (user_id, plan_id, amount, start_date) VALUES (?, ?, ?, ?)", (user_id, plan_id, plan[1], datetime.now()))
+        db_query("INSERT INTO investments (user_id, plan_id, amount, start_date) VALUES (?, ?, ?, ?)", (user_id, plan_id, plan[1], datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')))
         await query.edit_message_text(f"✅ *Investment Successful!* {plan[0]} is now active.")
     else:
         await query.edit_message_text("❌ *Insufficient Balance!* Please deposit funds.")
@@ -560,7 +560,7 @@ async def handle_text_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE
                 return
 
         amt = random.randint(20, 100)
-        db_query("UPDATE users SET balance = balance + ?, last_daily_bonus = ? WHERE user_id = ?", (amt, now, u_id))
+        db_query("UPDATE users SET balance = balance + ?, last_daily_bonus = ? WHERE user_id = ?", (amt, now.strftime('%Y-%m-%d %H:%M:%S.%f'), u_id))
         await update.message.reply_text(f"🎁 *Daily Bonus Claimed!*\nYou received ₹{amt} added to your wallet.", parse_mode='Markdown')
     elif t == "👥 Refer & Earn":
         link = f"https://t.me/{(await context.bot.get_me()).username}?start={u_id}"
