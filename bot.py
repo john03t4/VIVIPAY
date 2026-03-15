@@ -243,7 +243,11 @@ async def buy_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not plan_res:
         await query.edit_message_text("❌ This plan no longer exists.")
         return
-        
+
+    # Ensure user exists before checking balance
+    if not db_query("SELECT user_id FROM users WHERE user_id = ?", (user_id,), fetch=True):
+        db_query("INSERT INTO users (user_id) VALUES (?)", (user_id,))
+
     plan = plan_res[0]
     user_bal = db_query("SELECT balance FROM users WHERE user_id = ?", (user_id,), fetch=True)[0][0]
     if user_bal >= plan[1]:
@@ -386,7 +390,13 @@ async def get_plan_days(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # --- DEPOSIT & SUPPORT ---
 async def start_withdraw(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
-    bal = db_query("SELECT balance FROM users WHERE user_id = ?", (user_id,), fetch=True)[0][0]
+    
+    res = db_query("SELECT balance FROM users WHERE user_id = ?", (user_id,), fetch=True)
+    if not res:
+        db_query("INSERT INTO users (user_id) VALUES (?)", (user_id,))
+        bal = 0.0
+    else: bal = res[0][0]
+        
     if bal < 1: 
         await update.message.reply_text("❌ Insufficient balance to withdraw.")
         return ConversationHandler.END
@@ -432,7 +442,9 @@ async def get_withdraw_amount(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text("❌ Please enter a valid number.")
         return WITHDRAW_AMOUNT
         
-    bal = db_query("SELECT balance FROM users WHERE user_id = ?", (user_id,), fetch=True)[0][0]
+    res = db_query("SELECT balance FROM users WHERE user_id = ?", (user_id,), fetch=True)
+    bal = res[0][0] if res else 0
+    
     if amount < MIN_WITHDRAW:
         await update.message.reply_text(f"❌ Minimum withdrawal amount is ₹{MIN_WITHDRAW}.")
         return WITHDRAW_AMOUNT
@@ -519,16 +531,23 @@ async def handle_text_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE
         db_query("INSERT INTO users (user_id) VALUES (?)", (u_id,))
         
     if t == "💰 My Wallet":
-        res = db_query("SELECT balance, total_withdrawn FROM users WHERE user_id = ?", (u_id,), fetch=True)[0]
-        await update.message.reply_text(f"💳 *Wallet Info*\nBalance: ₹{res[0]}\nWithdrawn: ₹{res[1]}", parse_mode='Markdown')
+        res = db_query("SELECT balance, total_withdrawn FROM users WHERE user_id = ?", (u_id,), fetch=True)
+        if res:
+            bal, withdrawn = res[0]
+            await update.message.reply_text(f"💳 *Wallet Info*\nBalance: ₹{bal}\nWithdrawn: ₹{withdrawn}", parse_mode='Markdown')
+        else:
+            await update.message.reply_text("🔄 Please type /start to initialize your wallet.", parse_mode='Markdown')
     elif t == "🎁 Claim Newbie Bonus":
-        status = db_query("SELECT newbie_claimed FROM users WHERE user_id = ?", (u_id,), fetch=True)[0][0]
+        res = db_query("SELECT newbie_claimed FROM users WHERE user_id = ?", (u_id,), fetch=True)
+        status = res[0][0] if res else 1 # Treat as claimed if missing to prevent errors
         if status == 0:
             db_query("UPDATE users SET balance = balance + ?, newbie_claimed = 1 WHERE user_id = ?", (NEWBIE_BONUS, u_id))
             await update.message.reply_text(f"✅ ₹{NEWBIE_BONUS} bonus added!", reply_markup=get_main_menu(u_id))
         else: await update.message.reply_text("❌ Already claimed.")
     elif t == "📅 Daily Bonus":
-        last = db_query("SELECT last_daily_bonus FROM users WHERE user_id = ?", (u_id,), fetch=True)[0][0]
+        res = db_query("SELECT last_daily_bonus FROM users WHERE user_id = ?", (u_id,), fetch=True)
+        if not res: return
+        last = res[0][0]
         now = datetime.now()
         
         if last:
