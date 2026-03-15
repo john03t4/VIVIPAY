@@ -510,8 +510,14 @@ async def forward_to_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # --- TEXT BUTTONS ---
 async def handle_text_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message: return
     t = update.message.text
     u_id = str(update.effective_user.id)
+    
+    # Ensure user exists (prevents crash if Render wiped the DB)
+    if not db_query("SELECT user_id FROM users WHERE user_id = ?", (u_id,), fetch=True):
+        db_query("INSERT INTO users (user_id) VALUES (?)", (u_id,))
+        
     if t == "💰 My Wallet":
         res = db_query("SELECT balance, total_withdrawn FROM users WHERE user_id = ?", (u_id,), fetch=True)[0]
         await update.message.reply_text(f"💳 *Wallet Info*\nBalance: ₹{res[0]}\nWithdrawn: ₹{res[1]}", parse_mode='Markdown')
