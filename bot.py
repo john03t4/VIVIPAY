@@ -3,6 +3,7 @@ import sqlite3
 import random
 import os
 import threading
+import telegram
 from flask import Flask
 from datetime import datetime, timedelta
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardButton, InlineKeyboardMarkup
@@ -38,7 +39,8 @@ WITHDRAW_METHOD, WITHDRAW_AMOUNT, WITHDRAW_ADDRESS, WITHDRAW_BANK = range(8, 12)
 
 # --- DATABASE ENGINE ---
 def db_query(query, params=(), fetch=False):
-    with sqlite3.connect('vivipay_pro.db') as conn:
+    # Added timeout to prevent 'database is locked' crashes
+    with sqlite3.connect('vivipay_pro.db', timeout=20) as conn:
         cursor = conn.cursor()
         cursor.execute(query, params)
         if fetch:
@@ -165,7 +167,10 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             await context.bot.send_message(chat_id=u[0], text=f"📢 *ANNOUNCEMENT*\n\n{msg}", parse_mode='Markdown')
             count += 1
-        except: pass
+        except telegram.error.Forbidden:
+            print(f"User {u[0]} has blocked the bot. Skipping...")
+        except Exception as e:
+            print(f"Could not send message to {u[0]}: {e}")
     await update.message.reply_text(f"✅ Sent to {count} users.")
 
 # --- BAN SYSTEM ---
@@ -217,6 +222,22 @@ async def ban_enforcer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif update.callback_query:
             await update.callback_query.answer("⛔ You are banned!", show_alert=True)
         raise ApplicationHandlerStop
+
+# --- GLOBAL ERROR HANDLER ---
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Log the error and send a telegram message to notify the developer."""
+    # Log the error before we do anything else, so we can see it even if something breaks.
+    logging.error(f"Exception while handling an update: {context.error}")
+
+    # If the error is a user blocking the bot, just ignore it
+    if isinstance(context.error, telegram.error.Forbidden):
+        return
+
+    # Optional: Alert the admin (you) that an error occurred
+    try:
+        await context.bot.send_message(chat_id=ADMIN_ID, text=f"⚠️ Internal Error: {context.error}")
+    except Exception as e:
+        logging.error(f"Failed to send error alert to admin: {e}")
 
 # --- INVESTMENT FLOW ---
 async def show_plans(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -300,7 +321,10 @@ async def handle_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             text=f"🎊 *New Referral Verified!*\n\nUser: {query.from_user.full_name}\nReward: ₹{REFERRAL_REWARD} added to your balance!",
                             parse_mode='Markdown'
                         )
-                    except: pass
+                    except telegram.error.Forbidden:
+                        print(f"User {ref_id} has blocked the bot. Skipping...")
+                    except Exception as e:
+                        print(f"Could not send message to {ref_id}: {e}")
             
             await query.edit_message_text("✅ Verified Successfully! Click /start to access the main menu.")
         else:
@@ -310,8 +334,12 @@ async def handle_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer()
         _, uid, amt = data.split("_")
         db_query("UPDATE users SET balance = balance + ? WHERE user_id = ?", (amt, uid))
-        try: await context.bot.send_message(uid, f"🎉 *Deposit Approved!*\n₹{amt} has been added to your balance.", parse_mode='Markdown')
-        except: pass
+        try: 
+            await context.bot.send_message(uid, f"🎉 *Deposit Approved!*\n₹{amt} has been added to your balance.", parse_mode='Markdown')
+        except telegram.error.Forbidden:
+            print(f"User {uid} has blocked the bot. Skipping...")
+        except Exception as e:
+            print(f"Could not send message to {uid}: {e}")
         await query.message.delete()
         
     elif data.startswith("reject_"):
@@ -319,7 +347,10 @@ async def handle_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
         uid = data.split("_")[1]
         try: 
             await context.bot.send_message(uid, "❌ *Deposit Rejected!* Proof not accepted.", parse_mode='Markdown')
-        except: pass
+        except telegram.error.Forbidden:
+            print(f"User {uid} has blocked the bot. Skipping...")
+        except Exception as e:
+            print(f"Could not send message to {uid}: {e}")
         await query.message.delete()
         
     elif data.startswith("delplan_"):
@@ -347,7 +378,10 @@ async def handle_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
         db_query("UPDATE users SET total_withdrawn = total_withdrawn + ? WHERE user_id = ?", (amt, uid))
         try: 
             await context.bot.send_message(uid, f"✅ *Withdrawal Approved!*\n₹{amt} has been sent to your account.", parse_mode='Markdown')
-        except: pass
+        except telegram.error.Forbidden:
+            print(f"User {uid} has blocked the bot. Skipping...")
+        except Exception as e:
+            print(f"Could not send message to {uid}: {e}")
         await query.message.delete()
         
     elif data.startswith("wd_reject_"):
@@ -357,7 +391,10 @@ async def handle_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
         db_query("UPDATE users SET balance = balance + ? WHERE user_id = ?", (amt, uid))
         try: 
             await context.bot.send_message(uid, f"❌ *Withdrawal Rejected!*\n₹{amt} has been refunded to your wallet.", parse_mode='Markdown')
-        except: pass
+        except telegram.error.Forbidden:
+            print(f"User {uid} has blocked the bot. Skipping...")
+        except Exception as e:
+            print(f"Could not send message to {uid}: {e}")
         await query.message.delete()
 
 # --- ADMIN ADD PLAN ---
@@ -571,6 +608,9 @@ if __name__ == '__main__':
     init_db()
     keep_alive() # Start the web server in the background
     app = Application.builder().token(TOKEN).build()
+
+    # Register the global error handler
+    app.add_error_handler(error_handler)
 
     # Check for banned users before any other handler
     app.add_handler(TypeHandler(Update, ban_enforcer), group=-1)
