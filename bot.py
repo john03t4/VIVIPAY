@@ -163,14 +163,12 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = ' '.join(context.args)
     users = db_query("SELECT user_id FROM users", fetch=True)
     count = 0
-    for u in users:
+    for user in users:
         try:
-            await context.bot.send_message(chat_id=u[0], text=f"📢 *ANNOUNCEMENT*\n\n{msg}", parse_mode='Markdown')
+            await context.bot.send_message(chat_id=user[0], text=f"📢 *ANNOUNCEMENT*\n\n{msg}", parse_mode='Markdown')
             count += 1
-        except telegram.error.Forbidden:
-            print(f"User {u[0]} has blocked the bot. Skipping...")
-        except Exception as e:
-            print(f"Could not send message to {u[0]}: {e}")
+        except Exception:
+            continue # Just move to the next user if there's an error
     await update.message.reply_text(f"✅ Sent to {count} users.")
 
 # --- BAN SYSTEM ---
@@ -225,19 +223,18 @@ async def ban_enforcer(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # --- GLOBAL ERROR HANDLER ---
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Log the error and send a telegram message to notify the developer."""
-    # Log the error before we do anything else, so we can see it even if something breaks.
+    """Log the error and prevent the bot from crashing."""
     logging.error(f"Exception while handling an update: {context.error}")
-
-    # If the error is a user blocking the bot, just ignore it
-    if isinstance(context.error, telegram.error.Forbidden):
+    
+    # If a user blocked the bot, we don't need to do anything, just ignore it
+    if "Forbidden" in str(context.error):
         return
 
-    # Optional: Alert the admin (you) that an error occurred
+    # For other errors, you can optionally notify yourself
     try:
-        await context.bot.send_message(chat_id=ADMIN_ID, text=f"⚠️ Internal Error: {context.error}")
-    except Exception as e:
-        logging.error(f"Failed to send error alert to admin: {e}")
+        await context.bot.send_message(chat_id=ADMIN_ID, text=f"⚠️ Bot Error: {context.error}")
+    except:
+        pass
 
 # --- INVESTMENT FLOW ---
 async def show_plans(update: Update, context: ContextTypes.DEFAULT_TYPE):
