@@ -133,43 +133,92 @@ def get_join_keyboard():
 
 # --- COMMANDS ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Safety: Ensure update.message exists (prevents crash on rare update types)
+    if not update.message:
+        return
+
     user_id = str(update.effective_user.id)
     referrer = context.args[0] if context.args else None
 
     # Check if user already exists
     res = db_query("SELECT balance FROM users WHERE user_id = ?", (user_id,), fetch=True)
     if not res:
-        db_query("INSERT INTO users (user_id, referrer_id) VALUES (?, ?)", (user_id, referrer if referrer != user_id else None))
+        # Avoid self-referral
+        ref_to_insert = referrer if referrer != user_id else None
+        db_query("INSERT INTO users (user_id, referrer_id) VALUES (?, ?)", (user_id, ref_to_insert))
         bal = 0
     else: 
         bal = res[0][0]
 
+    # Membership Check
     if not await check_membership(user_id, context):
-        await update.message.reply_text(
-            "⚠️ *Access Denied!*\n\nYou must join all our official channels and groups to use this bot.", 
-            reply_markup=get_join_keyboard(), 
-            parse_mode='Markdown'
-        )
+        try:
+            await update.message.reply_text(
+                "⚠️ *Access Denied!*\n\nYou must join all our official channels and groups to use this bot.", 
+                reply_markup=get_join_keyboard(), 
+                parse_mode='Markdown'
+            )
+        except telegram.error.Forbidden:
+            # User blocked the bot immediately, just exit silently
+            return
+        except Exception as e:
+            logging.error(f"Error sending membership prompt: {e}")
         return
 
-    await update.message.reply_text(f"💎 *VIVI PAY PREMIER*\n💰 *Balance:* ₹{bal}\n━━━━━━━━━━━━━━", reply_markup=get_main_menu(update.effective_user.id), parse_mode='Markdown')
+    # Final Welcome Message with Safety Net
+    try:
+        await update.message.reply_text(
+            f"💎 *VIVI PAY PREMIER*\n💰 *Balance:* ₹{bal}\n━━━━━━━━━━━━━━", 
+            reply_markup=get_main_menu(update.effective_user.id), 
+            parse_mode='Markdown'
+        )
+    except telegram.error.Forbidden:
+        # Prevent crash if user blocks bot during the start process
+        logging.warning(f"User {user_id} blocked bot during /start")
+    except Exception as e:
+        logging.error(f"Failed to send start menu to {user_id}: {e}")
 
 # --- BROADCAST COMMAND ---
 async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID: return
+    if update.effective_user.id != ADMIN_ID: 
+        return
+        
     if not context.args:
         await update.message.reply_text("Usage: /broadcast <message>")
         return
+        
     msg = ' '.join(context.args)
     users = db_query("SELECT user_id FROM users", fetch=True)
+    
+    if not users:
+        await update.message.reply_text("No users found.")
+        return
+
+    await update.message.reply_text(f"🚀 Starting broadcast to {len(users)} users...")
+    
     count = 0
     for user in users:
         try:
+            await context.bot.send_message(
+                chat_id=user[0], 
+                text=f"📢 *ANNOUNCEMENT*\n\n{msg}", 
+                parse_mode='Markdown'
+            )
+            count += 1
+        except telegram.error.Forbidden:
+            # User blocked the bot, just skip them
+            continue 
+        except telegram.error.RetryAfter as e:
+            # Telegram rate limit hit. Wait the required seconds and retry.
+            import asyncio
+            await asyncio.sleep(e.retry_after)
             await context.bot.send_message(chat_id=user[0], text=f"📢 *ANNOUNCEMENT*\n\n{msg}", parse_mode='Markdown')
             count += 1
-        except Exception:
-            continue # Just move to the next user if there's an error
-    await update.message.reply_text(f"✅ Sent to {count} users.")
+        except Exception as e:
+            logging.error(f"Broadcast failed for user {user[0]}: {e}")
+            continue # Move to next user regardless of error
+            
+    await update.message.reply_text(f"✅ Broadcast Complete! Sent to {count} users.")
 
 # --- BAN SYSTEM ---
 async def ban_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
