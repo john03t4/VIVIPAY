@@ -14,7 +14,7 @@ from telegram.ext import (
 )
 
 # --- CONFIGURATION ---
-TOKEN = os.getenv("BOT_TOKEN", "8784656617:AAFh3VgWv6wmkQ9d-z6vdhDLlNQYCDecE1I")
+TOKEN = os.getenv("BOT_TOKEN", "")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "8473662465"))
 NEWBIE_BONUS = 200
 REFERRAL_REWARD = 200
